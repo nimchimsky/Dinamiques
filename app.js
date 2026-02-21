@@ -222,7 +222,7 @@ class DinamiquesViewer {
             this.dinamiques = await response.json();
 
             this.populateDropdowns();
-            await this.loadStats();
+            this.updateStats();
             this.updateFavoritesSidebar();
             this.applyClientFilters();
 
@@ -231,48 +231,38 @@ class DinamiquesViewer {
         }
     }
 
-    async loadStats() {
-        try {
-            // Fetch basic stats (counts)
-            const response = await fetch('/api/stats');
-            const stats = await response.json();
+    updateStats() {
+        this.animateNumber(this.totalCountEl, this.dinamiques.length);
+        this.animateNumber(this.tisCountEl, this.dinamiques.filter(d => (d.target || []).includes('TIS')).length);
+        this.animateNumber(this.tapdCountEl, this.dinamiques.filter(d => (d.target || []).includes('TAPD')).length);
 
-            this.animateNumber(this.totalCountEl, stats.total);
-            this.animateNumber(this.tisCountEl, Math.floor(stats.total * 0.5));
-            this.animateNumber(this.tapdCountEl, Math.floor(stats.total * 0.5));
+        // Calculate Module Stats from the loaded dynamics
+        const moduleCounts = {};
+        this.dinamiques.forEach(d => {
+            const conn = d.json_complet?.connexio_curricular || d.connexio_curricular || {};
+            const units = conn.unitats_formatives || conn.moduls || [];
 
-            // Calculate Module Stats from the loaded dynamics
-            // Since the API only provides per-model stats, we calculate per-module stats client-side 
-            // from the full list (we use limit=500 in loadData to get most of them).
-            const moduleCounts = {};
-            this.dinamiques.forEach(d => {
-                const conn = d.json_complet?.connexio_curricular || d.connexio_curricular || {};
-                const units = conn.unitats_formatives || conn.moduls || [];
-
-                const processMP = (code, name) => {
-                    const norm = normalizeModule(code, name);
-                    const label = norm ? norm.label : (code || name);
-                    if (label) {
-                        moduleCounts[label] = (moduleCounts[label] || 0) + 1;
-                    }
-                };
-
-                if (units.length > 0) {
-                    units.forEach(u => processMP(u.codi, u.nom));
-                } else {
-                    processMP(conn.modul_codi, conn.modul);
+            const processMP = (code, name) => {
+                const norm = normalizeModule(code, name);
+                const label = norm ? norm.label : (code || name);
+                if (label) {
+                    moduleCounts[label] = (moduleCounts[label] || 0) + 1;
                 }
-            });
+            };
 
-            const sortedModules = Object.entries(moduleCounts)
-                .map(([name, count]) => ({ name, count }))
-                .sort((a, b) => b.count - a.count)
-                .slice(0, 5);
+            if (units.length > 0) {
+                units.forEach(u => processMP(u.codi, u.nom));
+            } else {
+                processMP(conn.modul_codi, conn.modul);
+            }
+        });
 
-            this.renderModuleBars(sortedModules);
-        } catch (error) {
-            console.error('Error loading stats:', error);
-        }
+        const sortedModules = Object.entries(moduleCounts)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
+
+        this.renderModuleBars(sortedModules);
     }
 
     populateDropdowns() {
@@ -380,20 +370,6 @@ class DinamiquesViewer {
         if ([...cas].includes(currentCa)) this.caFilter.value = currentCa;
     }
 
-    updateStats() {
-        this.animateNumber(this.totalCountEl, this.dinamiques.length);
-        this.animateNumber(this.tisCountEl, this.dinamiques.filter(d => (d.target || []).includes('TIS')).length);
-        this.animateNumber(this.tapdCountEl, this.dinamiques.filter(d => (d.target || []).includes('TAPD')).length);
-
-        // Top 5 Models
-        const modelCounts = {};
-        this.dinamiques.forEach(d => { modelCounts[d.model] = (modelCounts[d.model] || 0) + 1; });
-        const sortedModels = Object.entries(modelCounts)
-            .map(([model, count]) => ({ model, count }))
-            .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
-        this.renderModelBars(sortedModels);
-    }
 
     applyClientFilters() {
         this.filtered = this.dinamiques.filter(d => {
