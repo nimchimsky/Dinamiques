@@ -201,6 +201,8 @@ class DinamiquesViewer {
         this.favoritesOnly.addEventListener('change', (e) => { this.filters.favoritesOnly = e.target.checked; this.applyClientFilters(); });
 
         this.clearFiltersBtn.addEventListener('click', () => this.clearFilters());
+        this.applyFiltersBtn.addEventListener('click', () => this.filtersOverlay.classList.add('hidden'));
+
         this.sortSelect.addEventListener('change', (e) => { this.sort = e.target.value; this.applyClientFilters(); });
         this.loadMoreBtn.addEventListener('click', () => { this.currentPage++; this.renderGrid(true); });
 
@@ -244,36 +246,63 @@ class DinamiquesViewer {
     }
 
     updateCurricularDropdowns() {
-        // Populate MPs based on current Cycle filter
         const cicle = this.filters.cicle;
-        const allMPs = new Set();
+        const mps = new Set();
+        const ras = new Set();
+        const cas = new Set();
 
         this.dinamiques.forEach(d => {
+            if (cicle !== 'all' && !d.target.includes(cicle)) return;
+
             const json = d.json_complet || {};
             const conn = json.connexio_curricular || {};
-            const mps = conn.unitats_formatives || conn.moduls || [];
+            // Normalize structure: sometimes unitats_formatives, sometimes moduls
+            const units = conn.unitats_formatives || conn.moduls || [];
 
-            mps.forEach(mp => {
-                if (typeof mp === 'object') {
-                    // Check if it matches cycle
-                    let isMatch = true;
-                    if (cicle === 'TIS' && mp.codi && !mp.codi.startsWith('MP')) isMatch = false; // Simple heuristic
+            units.forEach(u => {
+                // Check cycle match if possible (heuristic)
+                const code = u.codi || u.nom || '';
+                let isMatch = true;
+                if (cicle === 'TIS' && code && !code.startsWith('MP')) isMatch = false;
 
-                    if (isMatch) allMPs.add(normalizeModule(mp.codi || mp.nom));
+                if (isMatch) {
+                    const normalized = normalizeModule(u.codi, u.nom);
+                    const mpLabel = normalized ? normalized.label : (u.codi || u.nom);
+                    mps.add(mpLabel);
+
+                    if (this.filters.mp === 'all' || this.filters.mp === mpLabel) {
+                        (u.resultats_aprenentatge || []).forEach(r => {
+                            const raName = r.codi || r.descripcio; // e.g. "RA1"
+                            if (raName) {
+                                ras.add(raName);
+
+                                if (this.filters.ra === 'all' || this.filters.ra === raName) {
+                                    (r.criteris_avaluacio || []).forEach(c => cas.add(c));
+                                }
+                            }
+                        });
+                    }
                 }
             });
         });
 
-        // This logic is simplified for static version compared to dynamic one
-        // ideally we would extract exact MP/RA/CA maps again, but for now we trust `json_complet`
-        // Since we are static, we just list what's available
-
-        // Simple Set for MPs
-        const sortedMPs = [...allMPs].sort();
-        const currentVal = this.mpFilter.value;
+        // Update MP Dropdown
+        const currentMp = this.mpFilter.value;
         this.mpFilter.innerHTML = '<option value="all">Tots els mòduls</option>' +
-            sortedMPs.map(m => `<option value="${m}">${m}</option>`).join('');
-        this.mpFilter.value = currentVal;
+            [...mps].sort().map(m => `<option value="${m}">${m}</option>`).join('');
+        if ([...mps].includes(currentMp)) this.mpFilter.value = currentMp;
+
+        // Update RA Dropdown
+        const currentRa = this.raFilter.value;
+        this.raFilter.innerHTML = '<option value="all">Tots els RAs</option>' +
+            [...ras].sort().map(r => `<option value="${r}">${r}</option>`).join('');
+        if ([...ras].includes(currentRa)) this.raFilter.value = currentRa;
+
+        // Update CA Dropdown
+        const currentCa = this.caFilter.value;
+        this.caFilter.innerHTML = '<option value="all">Tots els CAs</option>' +
+            [...cas].sort().map(c => `<option value="${c}">${c}</option>`).join('');
+        if ([...cas].includes(currentCa)) this.caFilter.value = currentCa;
     }
 
     updateStats() {
@@ -334,8 +363,49 @@ class DinamiquesViewer {
             // Favorites
             if (this.filters.favoritesOnly && !this.favorites.includes(d.id)) return false;
 
-            // Advanced Filters (Recycling logic from viewer.js)
-            // MP/RA/CA - simplified for static js demo (needs full robust parsing like viewer.js ideally)
+            // Advanced Filters
+            if (this.filters.mp !== 'all' || this.filters.ra !== 'all' || this.filters.ca !== 'all') {
+                const json = d.json_complet || {};
+                const conn = json.connexio_curricular || {};
+                const units = conn.unitats_formatives || conn.moduls || [];
+
+                let matchesMP = (this.filters.mp === 'all');
+                let matchesRA = (this.filters.ra === 'all');
+                let matchesCA = (this.filters.ca === 'all');
+
+                // If filtering by MP, check if dynamic has this MP
+                if (!matchesMP) {
+                    matchesMP = units.some(u => {
+                        const norm = normalizeModule(u.codi, u.nom);
+                        return (norm ? norm.label : (u.codi || u.nom)) === this.filters.mp;
+                    });
+                }
+
+                // If filtering by RA, check if dynamic has this RA (inside matching MP if selected)
+                if (this.filters.ra !== 'all') {
+                    matchesRA = units.some(u => {
+                        const norm = normalizeModule(u.codi, u.nom);
+                        const mpLabel = norm ? norm.label : (u.codi || u.nom);
+                        if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
+                        return (u.resultats_aprenentatge || []).some(r => (r.codi || r.descripcio) === this.filters.ra);
+                    });
+                }
+
+                // If filtering by CA
+                if (this.filters.ca !== 'all') {
+                    matchesCA = units.some(u => {
+                        const norm = normalizeModule(u.codi, u.nom);
+                        const mpLabel = norm ? norm.label : (u.codi || u.nom);
+                        if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
+                        return (u.resultats_aprenentatge || []).some(r => {
+                            if (this.filters.ra !== 'all' && (r.codi || r.descripcio) !== this.filters.ra) return false;
+                            return (r.criteris_avaluacio || []).includes(this.filters.ca);
+                        });
+                    });
+                }
+
+                if (!matchesMP || !matchesRA || !matchesCA) return false;
+            }
             // Digital
             if (this.filters.digital !== 'all') {
                 const materials = json.materials?.necessaris || [];
@@ -377,11 +447,37 @@ class DinamiquesViewer {
 
             // Quality
             if (this.filters.qualitat > 0) {
-                if (d.qualitat < this.filters.qualitat) return false;
+                // Normalize 10-scale score to 5-scale for filtering
+                const normalizedScore = (d.qualitat || 0) / 2;
+                if (normalizedScore < this.filters.qualitat) return false;
             }
 
             return true;
         });
+
+        // Apply Sorting
+        if (this.sort) {
+            this.filtered.sort((a, b) => {
+                switch (this.sort) {
+                    case 'recent':
+                        return (b.id || 0) - (a.id || 0); // Assuming higher ID is newer
+                    case 'stars-desc':
+                        return (b.qualitat || 0) - (a.qualitat || 0);
+                    case 'stars-asc':
+                        return (a.qualitat || 0) - (b.qualitat || 0);
+                    case 'title':
+                        return (a.titol || '').localeCompare(b.titol || '');
+                    case 'time-asc':
+                        return (a.temps_total || 999) - (b.temps_total || 999);
+                    case 'time-desc':
+                        return (b.temps_total || 0) - (a.temps_total || 0);
+                    case 'participants-asc':
+                        return (a.participants_min || 0) - (b.participants_min || 0);
+                    default:
+                        return 0;
+                }
+            });
+        }
 
         this.updateFilterBadge();
         this.updateResultsCount();
@@ -424,18 +520,18 @@ class DinamiquesViewer {
                 <button class="card-action-btn ${isFav ? 'favorited' : ''}" data-action="favorite">${isFav ? '★' : '☆'}</button>
             </div>
             <div class="card-header">
-                <div class="card-title-group">
-                    <h3 class="card-title">${this.escapeHtml(d.titol)}</h3>
-                    ${this.renderStars(d.qualitat)}
-                </div>
+                <h3 class="card-title">${this.escapeHtml(d.titol)}</h3>
                 <div class="card-badges">${badges}</div>
             </div>
-            <span class="card-type">${this.formatType(d.tipus_dinamica)}</span>
-            <span class="card-model">${this.escapeHtml(d.model)}</span>
+            <div class="card-tags-row">
+                <span class="card-type">${this.formatType(d.tipus_dinamica)}</span>
+                <span class="card-model">${this.escapeHtml(d.model)}</span>
+                ${this.renderStars(d.qualitat)}
+            </div>
             <div class="card-meta">
-                <span class="meta-item"><span class="meta-icon">⏱️</span> ${d.temps_total || '?'} min</span>
-                <span class="meta-item"><span class="meta-icon">👥</span> ${d.participants_min || '?'}-${d.participants_max || '?'}</span>
-                <span class="meta-item"><span class="meta-icon">🔊</span> ${d.soroll || '?'}/5</span>
+                <div class="meta-item"><span class="meta-icon">⏱️</span> ${d.temps_total || '?'} min</div>
+                <div class="meta-item"><span class="meta-icon">👥</span> ${d.participants_min || '?'}-${d.participants_max || '?'}</div>
+                <div class="meta-item"><span class="meta-icon">🔊</span> ${d.soroll || '?'}/5</div>
             </div>
             <div class="card-tags">${tags}${moreTags}</div>
         `;
@@ -453,38 +549,80 @@ class DinamiquesViewer {
     }
 
     openModal(d) {
-        // Simple modal implementation for static
         this.currentDynamic = d;
         this.modalTitle.textContent = d.titol;
         this.modalFavorite.textContent = this.favorites.includes(d.id) ? '★' : '☆';
-
-        // Re-use logic from viewer.js would be ideal but for simplicity creating basic view
-        // Ideally we structure viewer.js to export the render logic. 
-        // For now, I'll copy the render logic from my knowledge of viewer.js to make it robust
+        this.modalFavorite.classList.toggle('favorited', this.favorites.includes(d.id));
 
         const json = d.json_complet || {};
         const badges = (d.target || []).map(t => `<span class="badge badge-${t.toLowerCase()}">${t}</span>`).join('');
 
         this.modalBody.innerHTML = `
-            <div class="modal-header"><div class="modal-header-main"><div class="modal-title-group"><div class="modal-badges">${badges}</div>${this.renderStars(d.qualitat)}</div></div></div>
-            <div class="card-meta" style="margin-bottom:20px">
-                <span>⏱️ ${d.temps_total} min</span> | <span>👥 ${d.participants_min}-${d.participants_max}</span> | <span>🔊 ${d.soroll}/5</span>
+            <div class="modal-meta">
+                ${badges}
+                <span class="card-type">${this.formatType(d.tipus_dinamica)}</span>
+                <span class="card-model">${this.escapeHtml(d.model)}</span>
             </div>
-            ${json.resum ? `<div class="modal-section"><h3>📝 Resum</h3><p>${json.resum}</p></div>` : ''}
-            <div class="modal-section"><h3>📋 Procediment</h3>
-                ${(json.procediment || []).map(p => `
-                    <div class="fase-card">
-                        <div class="fase-header"><span class="fase-name">${p.titol || p.fase || 'Pas'}</span><span class="fase-time">${p.temps_estimat_minuts || '?'} min</span></div>
-                        <div class="fase-content"><p>${p.accio_docent || p.descripcio || ''}</p></div>
-                    </div>
-                `).join('')}
+            
+            <div style="margin-bottom: 24px;">
+                ${this.renderStars(d.qualitat)}
             </div>
+
+            <div class="info-block">
+                <div class="info-row"><span class="info-label">Durada</span><span class="info-value">${d.temps_total || '?'} minuts</span></div>
+                <div class="info-row"><span class="info-label">Participants</span><span class="info-value">${d.participants_min || '?'}-${d.participants_max || '?'}</span></div>
+                <div class="info-row"><span class="info-label">Nivell de soroll</span><span class="info-value">${d.soroll || '?'}/5</span></div>
+                <div class="info-row"><span class="info-label">Categoria</span><span class="info-value">${d.categoria || '?'}</span></div>
+            </div>
+
+            ${json.resum ? `
+                <div class="modal-section">
+                    <h3 class="modal-section-title">📝 Resum</h3>
+                    <p>${json.resum}</p>
+                </div>
+            ` : ''}
+
+            ${json.objectiu ? `
+                <div class="modal-section">
+                    <h3 class="modal-section-title">🎯 Objectiu</h3>
+                    <p>${json.objectiu}</p>
+                </div>
+            ` : ''}
+
+            ${json.procediment ? `
+                <div class="modal-section">
+                    <h3 class="modal-section-title">📋 Procediment</h3>
+                    <ul>
+                        ${(json.procediment || []).map(p => `
+                            <li><strong>${p.titol || p.fase || 'Pas'}:</strong> ${p.accio_docent || p.descripcio || ''}</li>
+                        `).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+
+            ${d.merged_variants && d.merged_variants.length > 0 ? `
+                <div class="modal-section" style="background:var(--bg-secondary); padding:12px; border-radius:8px; margin-top:20px;">
+                    <h3 class="modal-section-title">🔀 Variants Fusionades</h3>
+                    <p style="font-size:0.9em; opacity:0.8; margin-bottom:8px">Aquesta fitxa inclou continguts de les següents dinàmiques similars:</p>
+                    <ul style="margin:0; padding-left:20px; font-size:0.9em;">
+                        ${d.merged_variants.map(v => `
+                            <li><strong>${this.escapeHtml(v.titol)}</strong> <span style="opacity:0.6">(ID: ${v.id})</span></li>
+                        `).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+
+            ${this.renderMaterials(json.materials)}
+            ${this.renderTeacherTips(json.consells_docent)}
+            ${this.renderAccessibility(json.adaptacions_accessibilitat)}
+            ${this.renderCurricularConnection(json.connexio_curricular)}
+            ${this.renderEvaluation(json.avaluacio)}
+            ${this.renderDebrief(json.tancament_i_reflexio)}
+            ${this.renderInternalVariants(json.variants)}
         `;
 
         this.modalOverlay.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
-
-        this.modalFavorite.onclick = () => this.toggleFavorite(d.id);
     }
 
     closeModal() {
@@ -577,6 +715,11 @@ class DinamiquesViewer {
         this.themeToggle.textContent = next === 'light' ? '🌙' : '☀️';
     }
 
+    updateResultsCount() {
+        const showing = Math.min(this.currentPage * this.pageSize, this.filtered.length);
+        this.resultsCount.textContent = `Mostrant ${showing} de ${this.filtered.length} dinàmiques`;
+    }
+
     loadTheme() {
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
             // document.documentElement.setAttribute('data-theme', 'light');
@@ -585,16 +728,169 @@ class DinamiquesViewer {
 
     renderStars(score) {
         if (!score || score <= 0) return '';
-        const full = Math.floor(score);
-        const half = (score % 1) >= 0.5;
+        // Normalize 10-scale to 5-scale
+        const normalized = score > 5 ? score / 2 : score;
+        const full = Math.floor(normalized);
+        const half = (normalized % 1) >= 0.5;
+
         let html = '<div class="star-rating">';
         for (let i = 0; i < full; i++) html += '<span class="star">★</span>';
-        if (half) html += '<span class="star">★</span>';
+        if (half) html += '<span class="star" style="opacity:0.7">★</span>';
         html += `<span class="star-text">${score}</span></div>`;
         return html;
     }
 
+    renderMaterials(mat) {
+        if (!mat) return '';
+        if (typeof mat === 'string') {
+            return `<div class="modal-section"><h3 class="modal-section-title">📦 Materials</h3><p>${mat}</p></div>`;
+        }
+
+        let html = '<div class="modal-section"><h3 class="modal-section-title">📦 Materials</h3>';
+
+        if (mat.necessaris && mat.necessaris.length > 0) {
+            html += '<p><strong>Necessaris:</strong></p><ul>';
+            mat.necessaris.forEach(m => {
+                const text = typeof m === 'object' ? (m.item || m.nom || JSON.stringify(m)) : m;
+                html += `<li>${text}</li>`;
+            });
+            html += '</ul>';
+        }
+
+        if (mat.opcionals && mat.opcionals.length > 0) {
+            html += '<p><strong>Opcionals:</strong></p><ul>';
+            mat.opcionals.forEach(m => html += `<li>${m}</li>`);
+            html += '</ul>';
+        }
+
+        if (mat.dossier_alumne || mat.targetes_de_rol) {
+            html += '<p><em>(Veure annexos / fitxes de rol)</em></p>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    renderTeacherTips(tips) {
+        if (!tips) return '';
+        if (typeof tips === 'string') return `<div class="modal-section"><h3 class="modal-section-title">💡 Consells Docent</h3><p>${tips}</p></div>`;
+
+        let html = '<div class="modal-section"><h3 class="modal-section-title">💡 Consells Docent</h3>';
+
+        if (tips.advertencies && tips.advertencies.length) {
+            html += '<div class="tip-box warning"><strong>⚠️ Atenció:</strong><ul>' +
+                tips.advertencies.map(t => `<li>${t}</li>`).join('') + '</ul></div>';
+        }
+
+        if (tips.errors_comuns && tips.errors_comuns.length) {
+            html += '<div class="tip-box info"><strong>🚫 Errors Comuns:</strong><ul>' +
+                tips.errors_comuns.map(t => `<li>${t}</li>`).join('') + '</ul></div>';
+        }
+
+        // Generic text keys
+        ['preparacio_aula', 'gestio_temps', 'recomanacions'].forEach(k => {
+            if (tips[k]) html += `<p><strong>${this.formatType(k)}:</strong> ${tips[k]}</p>`;
+        });
+
+        html += '</div>';
+        return html;
+    }
+
+    renderAccessibility(acc) {
+        if (!acc) return '';
+        let html = '<div class="modal-section"><h3 class="modal-section-title">♿ Accessibilitat</h3><ul>';
+        let hasContent = false;
+
+        Object.keys(acc).forEach(k => {
+            const val = acc[k];
+            if (val && val !== 'cap' && val !== 'res') {
+                hasContent = true;
+                html += `<li><strong>${this.formatType(k)}:</strong> ${val}</li>`;
+            }
+        });
+
+        html += '</ul></div>';
+        return hasContent ? html : '';
+    }
+    renderCurricularConnection(conn) {
+        if (!conn) return '';
+        let html = '<div class="modal-section"><h3 class="modal-section-title">🎓 Connexió Curricular</h3><div class="info-block">';
+
+        if (conn.modul_codi || conn.modul) {
+            html += `<div class="info-row"><span class="info-label">Mòdul</span><span class="info-value">${conn.modul_codi || ''} ${conn.modul || ''}</span></div>`;
+        }
+        if (conn.ra) {
+            html += `<div class="info-row"><span class="info-label">RA</span><span class="info-value">${conn.ra}</span></div>`;
+        }
+        html += '</div>';
+
+        if (conn.descriptors) html += `<p style="margin-top:8px"><strong>Descriptors:</strong> ${conn.descriptors}</p>`;
+
+        html += '</div>';
+        return (conn.modul || conn.modul_codi) ? html : '';
+    }
+
+    renderEvaluation(ev) {
+        if (!ev) return '';
+        let html = '<div class="modal-section"><h3 class="modal-section-title">📊 Avaluació</h3>';
+
+        if (ev.que_observar && ev.que_observar.length) {
+            html += '<p><strong>Què observar:</strong></p><ul>' + ev.que_observar.map(o => `<li>${o}</li>`).join('') + '</ul>';
+        }
+
+        if (ev.evidencies_aprenentatge && ev.evidencies_aprenentatge.length) {
+            html += '<p><strong>Evidències:</strong></p><ul>' + ev.evidencies_aprenentatge.map(e => `<li>${e}</li>`).join('') + '</ul>';
+        }
+
+        if (ev.indicadors_nivell) {
+            html += '<div class="tip-box info"><strong>Nivells:</strong><br/>';
+            Object.keys(ev.indicadors_nivell).forEach(k => {
+                html += `<strong>${k}:</strong> ${ev.indicadors_nivell[k]}<br/>`;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    renderDebrief(deb) {
+        if (!deb) return '';
+        let html = '<div class="modal-section"><h3 class="modal-section-title">🗣️ Tancament i Reflexió</h3>';
+
+        if (deb.element_disparador) html += `<p><strong>Disparador:</strong> ${deb.element_disparador}</p>`;
+
+        if (deb.preguntes_debrief && deb.preguntes_debrief.length) {
+            html += '<p><strong>Preguntes Clau:</strong></p><ul>' + deb.preguntes_debrief.map(q => `<li>${q}</li>`).join('') + '</ul>';
+        }
+
+        if (deb.punts_clau_destacar && deb.punts_clau_destacar.length) {
+            html += '<p><strong>Punts a Destacar:</strong></p><ul>' + deb.punts_clau_destacar.map(p => `<li>${p}</li>`).join('') + '</ul>';
+        }
+
+        if (deb.connexio_teoria) html += `<div class="tip-box warning"><strong>🔗 Teoria:</strong> ${deb.connexio_teoria}</div>`;
+
+        html += '</div>';
+        return html;
+    }
+
+    renderInternalVariants(vars) {
+        if (!vars) return '';
+        let html = '<div class="modal-section"><h3 class="modal-section-title">🔄 Adaptacions del Model</h3><ul>';
+        let hasContent = false;
+        Object.keys(vars).forEach(k => {
+            const val = vars[k];
+            if (val && val !== 'cap' && val !== 'online') { // Online handled separately or included if desired
+                hasContent = true;
+                html += `<li><strong>${this.formatType(k)}:</strong> ${val}</li>`;
+            }
+        });
+        html += '</ul></div>';
+        return hasContent ? html : '';
+    }
+
     renderModelBars(models) {
+        if (!models || models.length === 0) return;
         const max = models[0]?.count || 1;
         this.modelBars.innerHTML = models.map(m => `
             <div class="model-bar">

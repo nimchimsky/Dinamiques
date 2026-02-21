@@ -631,7 +631,7 @@ body {
 
 /* Filters Drawer */
 .filters-drawer {
-    width: 380px;
+    width: min(380px, 100vw);
     height: 100vh;
     background: var(--bg-secondary);
     box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
@@ -1617,12 +1617,35 @@ body {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
+    .app {
+        grid-template-columns: 1fr;
+    }
+
     .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: min(86vw, 340px);
+        height: 100dvh;
         transform: translateX(-100%);
+        z-index: 220;
+        box-shadow: 8px 0 28px rgba(0, 0, 0, 0.45);
     }
 
     .sidebar.open {
         transform: translateX(0);
+    }
+
+    body.sidebar-open {
+        overflow: hidden;
+    }
+
+    body.sidebar-open::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 160;
     }
 
     .main-content {
@@ -1639,8 +1662,17 @@ body {
         padding: 0 16px;
     }
 
+    .header-left {
+        min-width: 0;
+        gap: 10px;
+    }
+
     .header-title {
         font-size: 1rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 60vw;
     }
 
     .filters-bar {
@@ -1652,6 +1684,26 @@ body {
         order: -1;
     }
 
+    .btn-filters {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .results-bar {
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 12px 16px;
+    }
+
+    .sort-wrapper {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .sort-select {
+        max-width: 58%;
+    }
+
     .cards-wrapper {
         padding: 0 16px 16px;
     }
@@ -1661,11 +1713,20 @@ body {
     }
 
     .modal {
-        max-height: 95vh;
+        max-height: calc(100dvh - 24px);
+        border-radius: 14px;
+    }
+
+    .modal-overlay {
+        padding: 12px;
     }
 
     .modal-header {
         padding: 16px;
+    }
+
+    .modal-title {
+        font-size: 1.1rem;
     }
 
     .modal-body {
@@ -1676,6 +1737,33 @@ body {
         width: calc(100% - 32px);
         flex-direction: column;
         gap: 12px;
+    }
+
+    .toast-container {
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+    }
+
+    .toast {
+        min-width: 0;
+        width: 100%;
+    }
+}
+
+@media (hover: none),
+(pointer: coarse) {
+    .card-actions {
+        opacity: 1;
+    }
+
+    .favorite-remove {
+        opacity: 1;
+    }
+
+    .card:hover {
+        transform: none;
+        box-shadow: none;
     }
 }
 
