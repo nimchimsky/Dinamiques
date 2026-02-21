@@ -286,6 +286,16 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.model-bar:hover {
+    transform: translateX(4px);
+}
+
+.model-bar:hover .model-bar-name {
+    color: var(--accent-primary);
 }
 
 .model-bar-label {

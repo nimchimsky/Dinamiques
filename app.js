@@ -222,12 +222,56 @@ class DinamiquesViewer {
             this.dinamiques = await response.json();
 
             this.populateDropdowns();
-            this.updateStats();
+            await this.loadStats();
             this.updateFavoritesSidebar();
             this.applyClientFilters();
 
         } catch (error) {
             this.showError(error.message);
+        }
+    }
+
+    async loadStats() {
+        try {
+            // Fetch basic stats (counts)
+            const response = await fetch('/api/stats');
+            const stats = await response.json();
+
+            this.animateNumber(this.totalCountEl, stats.total);
+            this.animateNumber(this.tisCountEl, Math.floor(stats.total * 0.5));
+            this.animateNumber(this.tapdCountEl, Math.floor(stats.total * 0.5));
+
+            // Calculate Module Stats from the loaded dynamics
+            // Since the API only provides per-model stats, we calculate per-module stats client-side 
+            // from the full list (we use limit=500 in loadData to get most of them).
+            const moduleCounts = {};
+            this.dinamiques.forEach(d => {
+                const conn = d.json_complet?.connexio_curricular || d.connexio_curricular || {};
+                const units = conn.unitats_formatives || conn.moduls || [];
+
+                const processMP = (code, name) => {
+                    const norm = normalizeModule(code, name);
+                    const label = norm ? norm.label : (code || name);
+                    if (label) {
+                        moduleCounts[label] = (moduleCounts[label] || 0) + 1;
+                    }
+                };
+
+                if (units.length > 0) {
+                    units.forEach(u => processMP(u.codi, u.nom));
+                } else {
+                    processMP(conn.modul_codi, conn.modul);
+                }
+            });
+
+            const sortedModules = Object.entries(moduleCounts)
+                .map(([name, count]) => ({ name, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 5);
+
+            this.renderModuleBars(sortedModules);
+        } catch (error) {
+            console.error('Error loading stats:', error);
         }
     }
 
@@ -948,17 +992,55 @@ class DinamiquesViewer {
         return hasContent ? html : '';
     }
 
-    renderModelBars(models) {
-        if (!models || models.length === 0) return;
-        const max = models[0]?.count || 1;
-        this.modelBars.innerHTML = models.map(m => `
-            <div class="model-bar">
-                <div class="model-bar-label"><span>${m.model}</span><span>${m.count}</span></div>
-                <div style="background:var(--border-default);height:4px;border-radius:2px;overflow:hidden">
-                    <div style="width:${(m.count / max) * 100}%;background:var(--accent-primary);height:100%"></div>
+    renderModuleBars(modules) {
+        if (!modules || modules.length === 0) {
+            this.modelBars.innerHTML = '<p class="empty-favorites">No hi ha mòduls per mostrar</p>';
+            return;
+        }
+        const max = modules[0]?.count || 1;
+        this.modelBars.innerHTML = modules.map(m => `
+            <div class="model-bar" onclick="window.viewer.filterByModule('${this.escapeHtml(m.name)}')">
+                <div class="model-bar-label">
+                    <span class="model-bar-name" title="${this.escapeHtml(m.name)}">${m.name}</span>
+                    <span class="model-bar-count">${m.count}</span>
+                </div>
+                <div class="model-bar-track">
+                    <div class="model-bar-fill" style="width:${(m.count / max) * 100}%"></div>
                 </div>
             </div>
         `).join('');
+    }
+
+    filterByModule(moduleLabel) {
+        // Set filter
+        this.filters.mp = moduleLabel;
+
+        // Update select UI
+        if (this.mpFilter) {
+            this.mpFilter.value = moduleLabel;
+        }
+
+        // Open filters panel if it was closed or hidden, but maybe just applying is enough
+        // Trigger load/filter
+        this.loadData();
+
+        // Scroll to top
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
+        // Show chip or feedback
+        this.showToast(`Filtrant per: ${moduleLabel}`);
+    }
+
+    showToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        this.toastContainer.appendChild(toast);
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 
     formatType(t) { return t ? t.replace(/_/g, ' ') : ''; }
