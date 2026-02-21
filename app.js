@@ -256,34 +256,65 @@ class DinamiquesViewer {
 
             const json = d.json_complet || {};
             const conn = json.connexio_curricular || {};
-            // Normalize structure: sometimes unitats_formatives, sometimes moduls
+
+            // Nested structure support
             const units = conn.unitats_formatives || conn.moduls || [];
 
-            units.forEach(u => {
-                // Check cycle match if possible (heuristic)
-                const code = u.codi || u.nom || '';
-                let isMatch = true;
-                if (cicle === 'TIS' && code && !code.startsWith('MP')) isMatch = false;
+            if (units.length > 0) {
+                units.forEach(u => {
+                    const code = u.codi || u.nom || '';
+                    let isMatch = true;
+                    if (cicle === 'TIS' && code && !code.startsWith('MP')) isMatch = false;
 
-                if (isMatch) {
-                    const normalized = normalizeModule(u.codi, u.nom);
-                    const mpLabel = normalized ? normalized.label : (u.codi || u.nom);
-                    mps.add(mpLabel);
+                    if (isMatch) {
+                        const normalized = normalizeModule(u.codi, u.nom);
+                        const mpLabel = normalized ? normalized.label : (u.codi || u.nom);
+                        mps.add(mpLabel);
 
-                    if (this.filters.mp === 'all' || this.filters.mp === mpLabel) {
-                        (u.resultats_aprenentatge || []).forEach(r => {
-                            const raName = r.codi || r.descripcio; // e.g. "RA1"
-                            if (raName) {
-                                ras.add(raName);
+                        if (this.filters.mp === 'all' || this.filters.mp === mpLabel) {
+                            (u.resultats_aprenentatge || []).forEach(r => {
+                                const raName = r.codi || r.descripcio; // e.g. "RA1"
+                                if (raName) {
+                                    ras.add(raName);
 
-                                if (this.filters.ra === 'all' || this.filters.ra === raName) {
-                                    (r.criteris_avaluacio || []).forEach(c => cas.add(c));
+                                    if (this.filters.ra === 'all' || this.filters.ra === raName) {
+                                        (r.criteris_avaluacio || []).forEach(c => cas.add(c));
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
+                    }
+                });
+            } else {
+                // Flat structure fallback
+                const rawCode = (conn.modul_codi || '').trim();
+                const rawName = (conn.modul || '').trim();
+                if (!rawCode && !rawName) return;
+
+                let normalized = normalizeModule(rawCode, rawName);
+                if (normalized.cycle === '?' && d.target && d.target.length === 1) {
+                    const inferredCycle = d.target[0].toUpperCase();
+                    normalized = {
+                        ...normalized,
+                        cycle: inferredCycle,
+                        label: `${rawCode || normalized.code} - ${rawName || normalized.name} [${inferredCycle}]`
+                    };
+                }
+
+                const mpLabel = normalized.label;
+                mps.add(mpLabel);
+
+                if (this.filters.mp === 'all' || this.filters.mp === mpLabel) {
+                    const raName = (conn.ra || '').toUpperCase().trim();
+                    if (raName) {
+                        ras.add(raName);
+                        if (this.filters.ra === 'all' || this.filters.ra === raName) {
+                            let cas_list = Array.isArray(conn.ca) ? conn.ca : (conn.ca ? [conn.ca] : []);
+                            cas_list.forEach(c => cas.add(String(c).toUpperCase().trim()));
+                        }
                     }
                 }
-            });
+            }
         });
 
         // Update MP Dropdown
@@ -373,35 +404,63 @@ class DinamiquesViewer {
                 let matchesRA = (this.filters.ra === 'all');
                 let matchesCA = (this.filters.ca === 'all');
 
-                // If filtering by MP, check if dynamic has this MP
-                if (!matchesMP) {
-                    matchesMP = units.some(u => {
-                        const norm = normalizeModule(u.codi, u.nom);
-                        return (norm ? norm.label : (u.codi || u.nom)) === this.filters.mp;
-                    });
-                }
-
-                // If filtering by RA, check if dynamic has this RA (inside matching MP if selected)
-                if (this.filters.ra !== 'all') {
-                    matchesRA = units.some(u => {
-                        const norm = normalizeModule(u.codi, u.nom);
-                        const mpLabel = norm ? norm.label : (u.codi || u.nom);
-                        if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
-                        return (u.resultats_aprenentatge || []).some(r => (r.codi || r.descripcio) === this.filters.ra);
-                    });
-                }
-
-                // If filtering by CA
-                if (this.filters.ca !== 'all') {
-                    matchesCA = units.some(u => {
-                        const norm = normalizeModule(u.codi, u.nom);
-                        const mpLabel = norm ? norm.label : (u.codi || u.nom);
-                        if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
-                        return (u.resultats_aprenentatge || []).some(r => {
-                            if (this.filters.ra !== 'all' && (r.codi || r.descripcio) !== this.filters.ra) return false;
-                            return (r.criteris_avaluacio || []).includes(this.filters.ca);
+                if (units.length > 0) {
+                    // Nested structure logic
+                    if (!matchesMP) {
+                        matchesMP = units.some(u => {
+                            const norm = normalizeModule(u.codi, u.nom);
+                            return (norm ? norm.label : (u.codi || u.nom)) === this.filters.mp;
                         });
-                    });
+                    }
+                    if (this.filters.ra !== 'all') {
+                        matchesRA = units.some(u => {
+                            const norm = normalizeModule(u.codi, u.nom);
+                            const mpLabel = norm ? norm.label : (u.codi || u.nom);
+                            if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
+                            return (u.resultats_aprenentatge || []).some(r => (r.codi || r.descripcio) === this.filters.ra);
+                        });
+                    }
+                    if (this.filters.ca !== 'all') {
+                        matchesCA = units.some(u => {
+                            const norm = normalizeModule(u.codi, u.nom);
+                            const mpLabel = norm ? norm.label : (u.codi || u.nom);
+                            if (this.filters.mp !== 'all' && mpLabel !== this.filters.mp) return false;
+                            return (u.resultats_aprenentatge || []).some(r => {
+                                if (this.filters.ra !== 'all' && (r.codi || r.descripcio) !== this.filters.ra) return false;
+                                return (r.criteris_avaluacio || []).includes(this.filters.ca);
+                            });
+                        });
+                    }
+                } else {
+                    // Flat structure logic
+                    const rawCode = (conn.modul_codi || '').trim();
+                    const rawName = (conn.modul || '').trim();
+                    let normalized = normalizeModule(rawCode, rawName);
+
+                    if (normalized) {
+                        if (normalized.cycle === '?' && d.target && d.target.length === 1) {
+                            const inferredCycle = d.target[0].toUpperCase();
+                            normalized = { ...normalized, label: `${rawCode || normalized.code} - ${rawName || normalized.name} [${inferredCycle}]` };
+                        }
+
+                        if (!matchesMP) matchesMP = (normalized.label === this.filters.mp);
+
+                        if (this.filters.ra !== 'all') {
+                            if (this.filters.mp !== 'all' && normalized.label !== this.filters.mp) matchesRA = false;
+                            else matchesRA = (String(conn.ra || '').toUpperCase().trim() === this.filters.ra);
+                        }
+
+                        if (this.filters.ca !== 'all') {
+                            if (this.filters.mp !== 'all' && normalized.label !== this.filters.mp) matchesCA = false;
+                            else if (this.filters.ra !== 'all' && String(conn.ra || '').toUpperCase().trim() !== this.filters.ra) matchesCA = false;
+                            else {
+                                let cas_list = Array.isArray(conn.ca) ? conn.ca : (conn.ca ? [conn.ca] : []);
+                                matchesCA = cas_list.some(c => String(c).toUpperCase().trim() === this.filters.ca);
+                            }
+                        }
+                    } else {
+                        matchesMP = matchesRA = matchesCA = false;
+                    }
                 }
 
                 if (!matchesMP || !matchesRA || !matchesCA) return false;
